@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Simulator</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* Simple freeze overlay */
+    #freezeOverlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      color: #fff; display: none;
+      align-items: center; justify-content: center;
+      z-index: 9999; text-align: center; padding: 20px;
+      font-family: system-ui, Arial, sans-serif;
+    }
+    #freezeOverlay .box {
+      background: #1e1e1e; padding: 24px 28px; border-radius: 12px;
+      max-width: 520px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Virtual Stock Simulator</h1>
+  </header>
+
+  <!-- Stocks Section -->
+  <section>
+    <h2>Companies</h2>
+    <div class="row">
+      <div class="card">
+        <h3><a href="companies/Company_A/Company_A.html">Orchard</a></h3>
+
+      </div>
+      <div class="card">
+        <h3><a href="companies/Company_B/Company_B.html">Pavillion</a></h3>
+
+      </div>
+      <div class="card">
+        <h3><a href="companies/Company_C/Company_C.html">Aurora</a></h3>
+
+      </div>
+      <div class="card">
+        <h3><a href="companies/Company_D/Company_D.html">Expanse</a></h3>
+
+      </div>
+      <div class="card">
+        <h3><a href="companies/Company_E/Company_E.html">Velocity</a></h3>
+
+      </div>
+      <div class="card">
+        <h3><a href="companies/Bond_X/Company_X.html">Nadia</a></h3>
+
+      </div>
+      <div class="card">
+        <h3><a href="companies/Bond_Y/Company_Y.html">Simsong</a></h3>
+
+      </div>
+    </div>
+  </section>
+
+
+  <!-- Mutual Funds Section -->
+  <section>
+    <h2>Mutual Funds</h2>
+    <div class="row">
+      <div class="card">
+        <h3><a href="companies/FundAlpha/FundAlpha.html">FundAlpha</a></h3>
+        <div class="button-row"><button class="buy-btn">BUY</button><button class="sell-btn">SELL</button></div>
+      </div>
+      <div class="card">
+        <h3><a href="companies/Bond_Z/Fund_Z.html">Fund Z</a></h3>
+        <div class="button-row"><button class="buy-btn">BUY</button><button class="sell-btn">SELL</button></div>
+      </div>
+      <div class="card">
+        <h3><a href="companies/FundBeta/FundBeta.html">FundBeta</a></h3>
+        <div class="button-row"><button class="buy-btn">BUY</button><button class="sell-btn">SELL</button></div>
+      </div>
+    </div>
+  </section>
+
+  <button id="submitShares">Submit All Shares</button>
+  <p id="submitStatus"></p>
+
+  <!-- Freeze Overlay -->
+  <div id="freezeOverlay">
+    <div class="box">
+      <h2>Waiting for new prices…</h2>
+      <p>We’re waiting for the admin to publish the next trade event.</p>
+      <p style="opacity:.8" id="freezeHint">Polling Sheet2…</p>
+    </div>
+  </div>
+
+  <script>
+    // ---------- CONFIG ----------
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwoFYK02R7rVoiu6H1Hxg2yulNobslRKsH2eF1_NvkNpbHO9PdvKeCxANhNA_XnNCbI/exec"; // <- from Apps Script deployment
+    const WATCHED = ["CompanyA","CompanyB","CompanyC","CompanyD","CompanyE","CompanyX","CompanyY","FundAlpha","FundZ","FundBeta"]; // columns in Sheet2
+
+    // ---------- UTILS ----------
+    function disableAll(disabled) {
+      document.querySelectorAll("button, a, input, select").forEach(el => {
+        if (el.tagName.toLowerCase() === "a") {
+          if (disabled) { el.dataset.href = el.getAttribute("href"); el.removeAttribute("href"); }
+          else if (el.dataset.href) { el.setAttribute("href", el.dataset.href); delete el.dataset.href; }
+        } else {
+          el.disabled = disabled;
+        }
+      });
+    }
+    function showFreeze(on) {
+      document.getElementById("freezeOverlay").style.display = on ? "flex" : "none";
+    }
+    async function getPrice(company) {
+      const res = await fetch(`${SCRIPT_URL}?mode=getPrice&company=${encodeURIComponent(company)}`);
+      const txt = await res.text();
+      const num = parseFloat(txt);
+      if (isNaN(num)) throw new Error(`Bad price for ${company}: ${txt}`);
+      return num;
+    }
+
+    // ---------- SUBMIT ----------
+    document.getElementById("submitShares").addEventListener("click", async () => {
+      const allowedUsers = ["user1", "user2", "user3","user4","user5","user6","user7","user8","user9","user10"];
+      const userId = prompt("Enter your user ID:")?.trim();
+      if (!userId || !allowedUsers.includes(userId)) {
+        alert("You are not authorized to submit data.");
+        return;
+      }
+
+      // Build portfolio from localStorage
+      const companies = [
+        "CompanyA","CompanyB","CompanyC","CompanyD","CompanyE",
+        "CompanyX","CompanyY","FundAlpha","FundZ","FundBeta"
+      ];
+      const portfolio = {};
+      companies.forEach(c => portfolio[c] = parseInt(localStorage.getItem(c + "_shares")) || 0);
+
+      if (!Object.values(portfolio).some(v => v > 0)) {
+        alert("You don't own any shares to submit!");
+        return;
+      }
+
+      // send to Sheet1 (same endpoint)
+      const params = new URLSearchParams({ userId });
+      Object.entries(portfolio).forEach(([k,v]) => params.append(k, v));
+      const url = `${SCRIPT_URL}?${params.toString()}`;
+
+      try {
+        const resp = await fetch(url);
+        const text = await resp.text();
+        document.getElementById("submitStatus").innerText = text;
+        // Start freeze/poll cycle
+        await freezeUntilNewPrices();
+      } catch (err) {
+        console.error(err);
+        document.getElementById("submitStatus").innerText = "Error submitting portfolio.";
+        alert("Error submitting portfolio.");
+      }
+    });
+
+    // ---------- FREEZE & POLL FOR NEW PRICES ----------
+    async function freezeUntilNewPrices() {
+      // 1) capture the current snapshot
+      const before = {};
+      for (const c of WATCHED) {
+        try { before[c] = await getPrice(c); }
+        catch { before[c] = null; }
+      }
+
+      // 2) freeze UI
+      disableAll(true);
+      showFreeze(true);
+
+      // 3) poll until any price changes
+      const freezeHint = document.getElementById("freezeHint");
+      let runs = 0;
+      const poll = async () => {
+        runs++;
+        freezeHint.textContent = `Polling Sheet2… (attempt ${runs})`;
+        for (const c of WATCHED) {
+          try {
+            const p = await getPrice(c);
+            if (before[c] !== null && p !== before[c]) {
+              // store the new price locally too (optional)
+              localStorage.setItem(`${c}_price`, String(p));
+              // unfreeze
+              disableAll(false);
+              showFreeze(false);
+              document.getElementById("submitStatus").innerText = `New price detected for ${c}: ${p}`;
+              return; // stop polling
+            }
+          } catch (e) {
+            console.warn("poll error", c, e.message);
+          }
+        }
+        setTimeout(poll, 3000); // check again
+      };
+      poll();
+    }
+
+    // Ensure cash exists
+    if (localStorage.getItem("cash") === null) {
+      localStorage.setItem("cash", "100000");
+    }
+  </script>
+</body>
+</html>
